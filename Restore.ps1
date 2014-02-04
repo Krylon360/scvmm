@@ -51,6 +51,10 @@ $VMTemplates = $JsonSerial.DeserializeObject($VMTemplatesRaw)
 # Restore Host Network Adapters
 $HostNetworkAdaptersRaw = Get-Content -Path HostNetworkAdapters.txt -Raw
 $HostNetworkAdapters = $JsonSerial.DeserializeObject($HostNetworkAdaptersRaw)
+
+# Restore Virtual Machines
+$VirtualMachines = Get-Content -Path VirtualMachines.txt -Raw
+$VirtualMachines = $JsonSerial.DeserializeObject($VirtualMachines)
  
 Write-Host "Working on Host Groups.."
 Write-Host " "
@@ -497,30 +501,90 @@ foreach ($VMTemplate in $VMTemplates)
 	{
 		Write-Host $VMTemplate.Name is not exist. Creating..
 		
+		# Set Variables
+		$OperatingSystem = $Null;
+		$VirtualHardDisk = $Null;
+		
+		# Clear Result Code
+		$ResultCode = "1"
+		
 		# Get Operating System
 		$OperatingSystem = Get-SCOperatingSystem | Where Name -eq $VMTemplate.OperatingSystem.Name
 		
-		# Get Virtual Hard Disk
-		$VirtualHardDisk = Get-SCVirtualHardDisk | Where Name -eq $VMTemplate.VirtualHardDisks
-		
-		# Get User Role
-		$UserRole = Get-SCUserRole -Name $VMTemplate.UserRole.Name
-		
-		# Get Capability Profile
-		$CapabilityProfile = Get-SCCapabilityProfile -Name $VMTemplate.CapabilityProfile.Name
-		
-		# Get CPU Type
-		$CPUType = Get-SCCPUType | Where Name -eq $VMTemplate.CPUType.Name
- 
-		if ($VirtualHardDisk)
+		if (!$OperatingSystem)
 		{
-			Write-Host Hello
-			# Set VM Template
-			$NewVMTemplate = New-SCVMTemplate -Name $VMTemplate.Name -Description $VMTemplate.Description -Owner $VMTemplate.Owner -UserRole $UserRole -OperatingSystem $OperatingSystem -VirtualHardDisk $VirtualHardDisk
+			$ResultCode = "-1"
+			
+			Write-Host Operating System for $VMTemplate.Name is not exist. Please check your library config.
 		}
-		else
+		
+		# Get Virtual Hard Disk
+		$VirtualHardDisk = Get-SCVirtualHardDisk | Where Name -eq $VMTemplate.VirtualHardDisks.Name
+		
+		if (!$VirtualHardDisk)
 		{
-			Write-Host $VMTemplate.VirtualHardDisks is not available on Library. Please check your library configuration.
+			$ResultCode = "-1"
+			
+			Write-Host Virtual Hard Disk for $VMTemplate.Name is not exist. Please check your library config.
+		}	
+		
+		# Create Job Group
+		$JobGroupGuid = [System.Guid]::NewGuid().toString()
+		
+		# Get Virtual Network Adapter
+		foreach ($VirtualNetworkAdapter in $VMTemplate.VirtualNetworkAdapters)
+		{
+			# Get IPv4 Address Type
+			if ($VirtualNetworkAdapter.IPv4AddressType -eq "1")
+			{
+				$IPv4AddressType = "Static"
+			}
+			else
+			{
+				$IPv4AddressType = "Dynamic"
+			}
+			
+			# Get IPv6 Address Type
+			if ($VirtualNetworkAdapter.IPv6AddressType -eq "1")
+			{
+				$IPv6AddressType = "Static"
+			}
+			else
+			{
+				$IPv6AddressType = "Dynamic"
+			}
+			
+			# Get VM Network
+			$VMNetwork = Get-SCVMNetwork -Name $VirtualNetworkAdapter.VMNetwork
+			
+			# Get VM Subnet
+			$VMSubnet = Get-SCVMSubnet -Name $VMNetwork.VMSubnet.Name
+		
+			if ($VirtualNetworkAdapter.VirtualNetworkAdapterType -eq "2")
+			{
+				# Synthetic
+				New-SCVirtualNetworkAdapter -JobGroup $JobGroupGuid -MACAddress $VirtualNetworkAdapter.MACAddress -MACAddressType $VirtualNetworkAdapter.MACAddressType -Synthetic -EnableVMNetworkOptimization $VirtualNetworkAdapter.VMNetworkOptimizationEnabled -EnableMACAddressSpoofing $VirtualNetworkAdapter.MACAddressSpoofingEnabled -IPv4AddressType $IPv4AddressType -IPv6AddressType $IPv6AddressType -VMSubnet $VMSubnet -VMNetwork $VMNetwork 
+			}
+			else
+			{
+				# Emulated
+				New-SCVirtualNetworkAdapter -JobGroup $JobGroupGuid -MACAddress $VirtualNetworkAdapter.MACAddress -MACAddressType $VirtualNetworkAdapter.MACAddressType -EnableVMNetworkOptimization $VirtualNetworkAdapter.VMNetworkOptimizationEnabled -EnableMACAddressSpoofing $VirtualNetworkAdapter.MACAddressSpoofingEnabled -IPv4AddressType $IPv4AddressType -IPv6AddressType $IPv6AddressType -VMSubnet $VMSubnet -VMNetwork $VMNetwork 
+			}
+		}
+		
+		if ($ResultCode -ne "-1")
+		{		
+			# Set VM Template
+			$NewVMTemplate = New-SCVMTemplate -JobGroup $JobGroupGuid -Name $VMTemplate.Name -Description $VMTemplate.Description -OperatingSystem $OperatingSystem -VirtualHardDisk $VirtualHardDisk
+			
+			if ($NewVMTemplate)
+			{
+				Write-Host $VMTemplate.Name is successfully created.
+			}
+			else
+			{
+				Write-Host $VMTemplate.Name is failed to create. Please check your library configuration.
+			}
 		}
 	}
 	else
@@ -531,72 +595,526 @@ foreach ($VMTemplate in $VMTemplates)
 
 Write-Host " "
 Write-Host " "
+Write-Host "Working on VM Template Properties.."
+Write-Host " "
+ 
+# Set VM Templates
+foreach ($VMTemplate in $VMTemplates)
+{
+	$CheckVMTemplate = Get-SCVMTemplate -Name $VMTemplate.Name
+	if (!$CheckVMTemplate)
+	{
+		Write-Host $VMTemplate.Name is not exist. Please check your library configuration..
+	}
+	else
+	{
+		Write-Host Working on $VMTemplate.Name properties..
+		
+		# Clear Variables	
+		$UserRole = $Null;
+		$Owner = $Null;
+		$CapabilityProfile = $Null;
+		$IsHighlyAvailable = $Null;
+		$IsDRProtectionRequired = $Null;
+		$ApplicationProfile = $Null;
+		$GetApplicationProfile = $Null;
+		$SQLProfile = $Null;
+		$GetSQLProfile = $Null;
+		$AnswerFile = $Null;
+		$CPUType = $Null;
+		$CPUCount = $Null;
+		$CPURelativeWeight = $Null;
+		$CPUReserve = $Null;
+		$CPUMaximumPercent = $Null;
+		$CPUPerVirtualNumaNodeMaximum = $Null;
+		$VirtualNumaNodesPerSocketMaximum = $Null;
+		$NumaIsolationRequired = $Null;
+		$MemoryMB = $Null;
+		$DynamicMemoryEnabled = $Null;
+		$MemoryWeight = $Null;
+		$MemoryPerVirtualNumaNodeMaximumMB = $Null;
+		$VirtualVideoAdapterEnabled = $Null;
+		$MonitorMaximumCount = $Null;
+		$MonitorMaximumResolution = $Null;
+		$HAVMPriority = $Null;
+		$SysprepScript = $Null;
+		$SysprepScriptName = $Null;
+		$SysprepScriptFile = $Null;
+		$SysprepFilePathName = $Null;
+		$ComputerName = $Null;
+		$FullName = $Null;
+		$OrganizationName = $Null;
+		$TimeZone = $Null;
+		$AutoLogonCount = $Null;
+		$GuiRunOnceCommands = $Null;
+		$GuiRunOnceCommandsArray = $Null;
+		$LinuxAdministratorSSHKey = $Null;
+		$LinuxDomainName = $Null;
+		$QuotaPoint = $Null;
+		$Tag = $Null;
+		$CostCenter = $Null;
+		
+		# Get User Role
+		$UserRole = Get-SCUserRole -Name $VMTemplate.UserRole.Name
+		
+		if ($UserRole)
+		{
+			# Set User Role
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -UserRole $UserRole
+		}
+			
+		# Get Template Owner
+		$Owner = $VMTemplate.Owner
+		
+		if ($Owner)
+		{
+			# Set Template Owner
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -Owner $Owner
+		}
+		
+		# Get Capability Profile
+		$CapabilityProfile = Get-SCCapabilityProfile -Name $VMTemplate.CapabilityProfile.Name
+		
+		if ($CapabilityProfile)
+		{
+			# Set Capability Profile
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CapabilityProfile $CapabilityProfile
+		}
+		
+		# Get Availability Status
+		$IsHighlyAvailable = $VMTemplate.IsHighlyAvailable
+		
+		if ($IsHighlyAvailable)
+		{
+			# Set Availability Status
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -HighlyAvailable $IsHighlyAvailable
+		}
+
+		# Get DR Protection
+		$IsDRProtectionRequired = $VMTemplate.IsDRProtectionRequired
+		
+		if ($IsDRProtectionRequired)
+		{
+			# Set DR Protection Status
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -DRProtectionRequired $IsDRProtectionRequired
+		}
+		
+		# Get Application Profile
+		 $ApplicationProfile = $VMTemplate.ApplicationProfile
+		 
+		if ($ApplicationProfile)
+		{
+			# Get Application Profile
+			$GetApplicationProfile = Get-SCApplicationProfile -Name $ApplicationProfile.Name
+			
+			if ($GetApplicationProfile)
+			{
+				# Set Application Profile
+				$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -ApplicationProfile $GetApplicationProfile
+			}
+		}
+		
+		# Get SQL Profile
+		 $SQLProfile = $VMTemplate.SQLProfile
+		 
+		if ($SQLProfile)
+		{
+			# Get SQL Profile
+			$GetSQLProfile = Get-SCSQLProfile -Name $SQLProfile.Name
+			
+			if ($GetSQLProfile)
+			{
+				# Set SQL Profile
+				$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -SQLProfile $GetSQLProfile
+			}
+		}
+
+		# Get AnswerFile
+		$AnswerFile = $VMTemplate.AnswerFile
+		
+		if ($AnswerFile)
+		{
+			# Set Answer File
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -AnswerFile $AnswerFile
+		}
+		
+		# Get CPU Type
+		$CPUType = Get-SCCPUType | Where Name -eq $VMTemplate.CPUType.Name
+		
+		if ($CPUType)
+		{
+			# Set CPU Type
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPUType $CPUType
+		}
+		
+		# Get CPU Count
+		$CPUCount = $VMTemplate.CPUCount
+		
+		if ($CPUCount)
+		{
+			# Set CPU Count
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPUCount $CPUCount
+		}
+		
+		# Get CPU Relative Weight
+		$CPURelativeWeight = $VMTemplate.CPURelativeWeight
+		
+		if ($CPURelativeWeight)
+		{
+			# Set CPU Relative Weight
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPURelativeWeight $CPURelativeWeight
+		}
+		
+		# Get CPU Reserve
+		$CPUReserve = $VMTemplate.CPUReserve
+		
+		if ($CPUReserve)
+		{
+			# Set CPU Reserve
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPUReserve $CPUReserve
+		}
+		
+		# Get CPU Maximum Percent
+		$CPUMaximumPercent = $VMTemplate.CPUMaximumPercent
+
+		if ($CPUMaximumPercent)
+		{
+			# Set CPU Maximum Percent
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPUMaximumPercent $CPUMaximumPercent
+		}
+		
+		# Get CPU Virtualization Numa Node Maximum
+		$CPUPerVirtualNumaNodeMaximum = $VMTemplate.CPUPerVirtualNumaNodeMaximum
+		
+		if ($CPUMaximumPercent)
+		{
+			# Set CPU Virtualization Numa Node Maximum
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CPUMaximumPercent $CPUMaximumPercent
+		}
+		
+		# Get Virtual Numa Nodes Per Socket Maximum
+		$VirtualNumaNodesPerSocketMaximum = $VMTemplate.VirtualNumaNodesPerSocketMaximum
+		
+		if ($VirtualNumaNodesPerSocketMaximum)
+		{
+			# Set Virtual Numa Nodes Per Socket Maximum
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -VirtualNumaNodesPerSocketMaximum $VirtualNumaNodesPerSocketMaximum
+		}
+
+		# Get Numa Isolation Required
+		$NumaIsolationRequired = $VMTemplate.NumaIsolationRequired 
+		
+		if ($NumaIsolationRequired)
+		{
+			# Set Numa Isolation Required
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -NumaIsolationRequired $NumaIsolationRequired
+		}
+		
+		# Get Memory MB
+		$MemoryMB = $VMTemplate.Memory
+		
+		if ($MemoryMB)
+		{
+			# Set Memory MB
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -MemoryMB $MemoryMB
+		}
+		
+		# Get Dynamic Memory
+		$DynamicMemoryEnabled = $VMTemplate.DynamicMemoryEnabled
+		
+		if ($DynamicMemoryEnabled -eq $True)
+		{
+			# Set Dynamic Memory
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -DynamicMemoryEnabled $DynamicMemoryEnabled -DynamicMemoryMinimumMB $VMTemplate.DynamicMemoryMinimumMB -DynamicMemoryMaximumMB $VMTemplate.DynamicMemoryMaximumMB -DynamicMemoryBufferPercentage $VMTemplate.DynamicMemoryBufferPercentage
+		}
+		
+		# Get Memory Weight
+		$MemoryWeight = $VMTemplate.MemoryWeight
+		
+		if ($MemoryWeight)
+		{
+			# Set Memory Weight
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -MemoryWeight $MemoryWeight
+		}
+		
+		# Get Memory Per Virtual Numa Node Maximum MB
+		$MemoryPerVirtualNumaNodeMaximumMB = $VMTemplate.MemoryPerVirtualNumaNodeMaximumMB
+		
+		if ($MemoryPerVirtualNumaNodeMaximumMB)
+		{
+			# Set Memory Per Virtual Numa Node Maximum MB
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -MemoryPerVirtualNumaNodeMaximumMB $MemoryPerVirtualNumaNodeMaximumMB
+		}
+		
+		# Get Virtual Video Adapter Status
+		$VirtualVideoAdapterEnabled = $VMTemplate.VirtualVideoAdapterEnabled
+		
+		if ($VirtualVideoAdapterEnabled)
+		{
+			# Set Virtual Video Adapter Status
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -VirtualVideoAdapterEnabled $VirtualVideoAdapterEnabled
+		}
+		
+		# Get Monitor Maximum Count
+		$MonitorMaximumCount = $VMTemplate.MonitorMaximumCount
+		
+		if ($MonitorMaximumCount)
+		{
+			# Set Monitor Maximum Count
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -MonitorMaximumCount $MonitorMaximumCount
+		}
+		
+		# Get Monitor Maximum Resolution
+		$MonitorMaximumResolution = $VMTemplate.MonitorMaximumResolution 
+
+		if ($MonitorMaximumResolution)
+		{
+			# Set Monitor Maximum Resolution
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -MonitorMaximumResolution $MonitorMaximumResolution
+		}
+		
+		# Get HAVM Priority
+		$HAVMPriority = $VMTemplate.HAVMPriority 
+		
+		if ($HAVMPriority)
+		{
+			# Set Monitor Maximum Resolution
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -HAVMPriority $HAVMPriority
+		}
+		
+		# Get Sysprep Script
+		$SysprepScript = $VMTemplate.SysprepScript
+		
+		if ($SysprepScript)
+		{
+			$SysprepScriptName = $SysprepScript.Name
+			$SysprepScriptFile = Get-Script | where {$_.Name -eq $SysprepScriptName}
+			
+			if (!$SysprepScriptFile)
+			{
+				$SysprepFilePathName = ($VMTemplate.SysprepScript.SharePath).Split("\")[-1]
+				$SysprepScriptFile = Get-Script | where {$_.SharePath -like "*$SysprepFilePathName"}
+			}
+						
+			# Set Sysprep Script
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -SysPrepFile $SysprepScriptFile -MergeAnswerFile $True
+		}
+		
+		# Get Computer Name
+		$ComputerName = $VMTemplate.ComputerName
+		
+		if ($ComputerName)
+		{
+			# Set Monitor Maximum Resolution
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -ComputerName $ComputerName
+		}
+		
+		# Get Full Name
+		$FullName = $VMTemplate.FullName
+		
+		if ($FullName)
+		{
+			# Set Monitor Maximum Resolution
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -FullName $FullName
+		}
+		
+		# Get Organization Name
+		$OrganizationName = $VMTemplate.OrgName
+		
+		if ($OrganizationName)
+		{
+			# Set Organization Name
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -OrganizationName $OrganizationName
+		}
+		
+		# Get Time Zone
+		$TimeZone = $VMTemplate.TimeZone
+		
+		if ($TimeZone)
+		{
+			# Set Time Zone
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -TimeZone $TimeZone
+		}
+		
+		# Get Auto Logon Count
+		$AutoLogonCount = $VMTemplate.AutoLogonCount
+		
+		if ($AutoLogonCount)
+		{
+			# Set Auto Logon Count
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -AutoLogonCount $AutoLogonCount
+		}
+		
+		# Get Gui Run Once Commands
+		$GuiRunOnceCommands = $VMTemplate.GuiRunOnceCommands
+		
+		if ($GuiRunOnceCommands)
+		{
+			# Create Array
+			$GuiRunOnceCommandsArray = @()
+			
+			foreach ($GuiRunOnceCommand in $GuiRunOnceCommands)
+			{
+				$GuiRunOnceCommandsArray += $GuiRunOnceCommand
+			}
+			
+			# Set Gui Run Once Commands
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -GuiRunOnceCommands $GuiRunOnceCommandsArray
+		}
+
+		# Get Linux Administrator SSH Key
+		$LinuxAdministratorSSHKey = $VMTemplate.LinuxAdministratorSSHKey
+		
+		if ($LinuxAdministratorSSHKey)
+		{
+			# Set Linux Administrator SSH Key
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -LinuxAdministratorSSHKey $LinuxAdministratorSSHKey
+		}		
+		
+		# Get Linux Domain Name
+		$LinuxDomainName = $VMTemplate.LinuxDomainName
+		
+		if ($LinuxDomainName)
+		{
+			# Set Linux Domain Name
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -LinuxDomainName $LinuxDomainName
+		}
+		
+		# Get Quota Point
+		$QuotaPoint = $VMTemplate.QuotaPoint
+		
+		if ($QuotaPoint)
+		{
+			# Set Quota Point
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -QuotaPoint $QuotaPoint
+		}
+		
+		# Get Tag
+		$Tag = $VMTemplate.Tag
+		
+		if ($Tag)
+		{
+			# Set Tag
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -Tag $Tag
+		}
+		
+		# Get Cost Center
+		$CostCenter = $VMTemplate.CostCenter
+		
+		if ($CostCenter)
+		{
+			# Set Cost Center
+			$SetVMTemplate = $CheckVMTemplate | Set-SCVMTemplate -CostCenter $CostCenter
+		}
+	}
+}
+
+Write-Host " "
+Write-Host " "
+Write-Host "Working on Domain Join Credentials"
+Write-Host " "
+
+# Get Templates
+$Templates = Get-SCVMTemplate
+
+# Set Domain
+$Domain = "deniz.denizbank.com"
+
+# Get Credentials
+$DomainJoinCredential = Get-Credential
+
+# Set Templates
+foreach ($Template in $Templates)
+{
+	$Template | Set-SCVMTemplate -Domain $Domain -DomainJoinCredential $DomainJoinCredential
+}
+
+Write-Host " "
+Write-Host " "
 Write-Host "Working on Host Network Adapters.."
 Write-Host " "
  
 # Set Host Network Adapters
-foreach ($VMTemplate in $VMTemplates)
+foreach ($HostNetworkAdapter in $HostNetworkAdapters)
 {
-	# 
-	$UserRoleName = $Null;
-	$UserRoleName = ($UserRoles | Where ID -eq $UserRoleQuota.RoleID).Name
-	$UserRole = Get-SCUserRole -Name $UserRoleName
- 
-	# Get Cloud
-	$CloudName = $Null;
-	$CloudName = ($Clouds | Where ID -eq $UserRoleQuota.CloudID).Name
-	$Cloud = Get-SCCloud -Name $CloudName
-	$GetUserRoleQuota = Get-SCUserRoleQuota -UserRole $UserRole -Cloud $Cloud
- 
-	Write-Host $UserRole.Name role quota is being applied on $Cloud.Name cloud..
- 
-	# Set User Role Quota
-	if ($UserRoleQuota.CPUCount)
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -CPUCount $UserRoleQuota.CPUCount
+	Write-Host Working on $HostNetworkAdapters.Name of $HostNetworkAdapter.VMHost ..
+	
+	# Clear Variables
+	$VMHostNetworkAdapter = $Null;
+
+	# Create Job Group
+	$JobGroupGuid = [System.Guid]::NewGuid().toString()
+	
+	# Get Host Network Adapter
+	$VMHost = Get-SCVMHost -ComputerName $HostNetworkAdapter.VMHost
+	$VMHostNetworkAdapter =  Get-SCVMHostNetworkAdapter -Name $HostNetworkAdapter.Name -VMHost $VMHost
+	
+	if ($VMHostNetworkAdapter)
+	{	
+		# Set Changes
+		$SetVMHostNetworkAdapter = Set-SCVMHostNetworkAdapter -VMHostNetworkAdapter $VMHostNetworkAdapter -Description $HostNetworkAdapter.Description -AvailableForPlacement $HostNetworkAdapter.AvailableForPlacement -UsedForManagement $HostNetworkAdapter.UsedForManagement -JobGroup $JobGroupGuid
+		
+		# Get Logical Network
+		$LogicalNetwork = Get-SCLogicalNetwork -Name $HostNetworkAdapter.NetworkLocation
+		
+		# Get Subnet VLANS
+		$SubnetVLANPool = @()
+		foreach ($SubnetVLAN in $HostNetworkAdapter.SubnetVLans)
+		{
+			$SubnetInfo = $SubnetVLAN.Split("-")
+			$SubnetVLANPool += New-SCSubnetVLan -Subnet $SubnetInfo[0] -VLanID $SubnetInfo[1]
+		}
+		
+		# Set Changes
+		$SetVMHostNetworkAdapter = Set-SCVMHostNetworkAdapter -VMHostNetworkAdapter $VMHostNetworkAdapter -AddOrSetLogicalNetwork $logicalNetwork -SubnetVLan $SubnetVLANPool -JobGroup $JobGroupGuid
+
+		# Set VM Host
+		$SetVMHost = Set-SCVMHost -VMHost $VMHost -JobGroup $JobGroupGuid
 	}
 	else
 	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -UseCPUCountMaximum
+		Write-Host $HostNetworkAdapters.Name is not exist on host. Please refresh your SCVMM environment.
 	}
+}
+
+Write-Host " "
+Write-Host " "
+Write-Host "Working on Virtual Machines.."
+Write-Host " "
  
-	# Set User Role Quota
-	if ($UserRoleQuota.MemoryMB)
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -MemoryMB $UserRoleQuota.MemoryMB
+# Set Virtual Machines
+foreach ($VirtualMachine in $VirtualMachines)
+{
+	Write-Host Working on $VM.Name ..
+	
+	# Clear Variables
+	$VM = $Null;
+
+	# Get VM
+	$VM = Get-SCVirtualMachine | Where VMId -eq $VM.VMId
+	
+	if ($VM)
+	{	
+		# Get Cloud Info
+		$CloudName = $VM.Cloud.Name
+		
+		# Get User Role Info
+		$UserRoleName = $VM.UserRole.Name
+		
+		# Get VM Owner Info
+		$Owner = $VM.Owner
+		
+		# Get Cloud
+		$Cloud = Get-SCCloud -Name $CloudName
+		
+		# Get User Role
+		$UserRole = Get-SCUserRole -Name $UserRoleName
+			
+		# Set VM Properties
+		$SetVM = $VM | Set-SCVirtualMachine -Description $VirtualMachine.Description -Cloud $Cloud -UserRole $UserRole -Owner $Owner -CostCenter $VirtualMachine.CostCenter -QuotaPoint $VirtualMachine.QuotaPoint -Tag $VirtualMachine.Tag
 	}
 	else
 	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -UseMemoryMBMaximum
-	}
- 
-	# Set User Role Quota
-	if ($UserRoleQuota.StorageGB)
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -StorageGB $UserRoleQuota.StorageGB
-	}
-	else
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -UseStorageGBMaximum
-	}
- 
-	# Set User Role Quota
-	if ($UserRoleQuota.VMCount)
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota |Set-SCUserRoleQuota -VMCount $UserRoleQuota.VMCount
-	}
-	else
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota |Set-SCUserRoleQuota -UseVMCountMaximum
-	}
- 
-	# Set User Role Quota
-	if ($UserRoleQuota.CustomQuotaCount)
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -CustomQuotaCount $UserRoleQuota.CustomQuotaCount
-	}
-	else
-	{
-		$SetUserRoleQuota = $GetUserRoleQuota | Set-SCUserRoleQuota -UseCustomQuotaCountMaximum
+		Write-Host $VM.Name is not exist on SCVMM. Please refresh your SCVMM environment.
 	}
 }

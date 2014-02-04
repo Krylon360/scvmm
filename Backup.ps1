@@ -39,7 +39,7 @@ $UserRoleQuotas = Get-SCUserRoleQuota | ConvertTo-Json
 $UserRoleQuotas | Set-Content -Path UserRoleQuotas.txt
 
 # Backup VM Templates
-$VMTemplates = Get-SCVMTemplate | ConvertTo-Json
+$VMTemplates = Get-SCVMTemplate | ConvertTo-Json -Depth 3
 $VMTemplates | Set-Content -Path VMTemplates.txt
 
 # Backup Host Network Adapters
@@ -47,9 +47,5 @@ $HostNetworkAdapters = Get-SCVMHostNetworkAdapter | ConvertTo-Json -Depth 1
 $HostNetworkAdapters | Set-Content -Path HostNetworkAdapters.txt
  
 # Backup Virtual Machine Information
-$VMs = Get-VM
-foreach ($VM in $VMs)
-{
-	$Value = $VM.VMId + ";" + $VM.CloudId + ";" + $VM.UserRoleID + ";" + $VM.Owner
-	Add-Content -Value $Value -Path VMs.txt
-}
+$VirtualMachines = Get-VM | ConvertTo-Json
+$VirtualMachines | Set-Content -Path VirtualMachines.txt
