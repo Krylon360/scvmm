@@ -25,7 +25,7 @@ $VMSubnets | Set-Content -Path VMSubnets.txt
 # Backup Clouds
 $Clouds = Get-SCCloud | ConvertTo-Json
 $Clouds | Set-Content -Path Clouds.txt
-
+ 
 # Backup Library Shares
 $LibraryShares = Get-SCLibraryShare | ConvertTo-Json
 $LibraryShares | Set-Content -Path LibraryShares.txt
@@ -37,11 +37,11 @@ $UserRoles | Set-Content -Path UserRoles.txt
 # Backup User Role Quotas
 $UserRoleQuotas = Get-SCUserRoleQuota | ConvertTo-Json
 $UserRoleQuotas | Set-Content -Path UserRoleQuotas.txt
-
+ 
 # Backup VM Templates
 $VMTemplates = Get-SCVMTemplate | ConvertTo-Json -Depth 3
 $VMTemplates | Set-Content -Path VMTemplates.txt
-
+ 
 # Backup Host Network Adapters
 $HostNetworkAdapters = Get-SCVMHostNetworkAdapter | ConvertTo-Json -Depth 1
 $HostNetworkAdapters | Set-Content -Path HostNetworkAdapters.txt
